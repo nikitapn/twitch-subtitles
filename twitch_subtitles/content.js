@@ -2,18 +2,18 @@
 class TwitchSubtitles {
   constructor() {
     this.isActive = false;
-    this.recognition = null;
-    this.translationEnabled = true;
-    this.targetLanguage = 'en';
     this.subtitleContainer = null;
     this.currentSubtitle = null;
     this.settings = {
+      translationEnabled: true,
+      translationProvider: 'ollama',
+      targetLanguage: 'en',
       fontSize: '18px',
       backgroundColor: 'rgba(0, 0, 0, 0.8)',
       textColor: '#ffffff',
       position: 'bottom'
     };
-    
+
     this.init();
   }
 
@@ -35,16 +35,16 @@ class TwitchSubtitles {
     this.subtitleContainer = document.createElement('div');
     this.subtitleContainer.id = 'twitch-subtitles-container';
     this.subtitleContainer.className = 'twitch-subtitles-overlay';
-    
-    // Apply styling
+
+    // Apply styling. Positioned as 'fixed' and kept in document.body (never
+    // inside Twitch's own player subtree) so we don't touch a React-managed
+    // DOM node — appending into it caused React reconciliation errors that
+    // crashed the player. Position is tracked against the player's bounding
+    // box instead; see trackVideoPlayerPosition().
     Object.assign(this.subtitleContainer.style, {
-      position: 'absolute',
-      bottom: '60px',
-      left: '50%',
-      transform: 'translateX(-50%)',
+      position: 'fixed',
       zIndex: '9999',
       pointerEvents: 'none',
-      width: '80%',
       textAlign: 'center',
       fontSize: this.settings.fontSize,
       color: this.settings.textColor,
@@ -57,11 +57,20 @@ class TwitchSubtitles {
   }
 
   waitForVideoPlayer() {
-    const observer = new MutationObserver((mutations) => {
+    const findAndTrack = () => {
       const videoPlayer = document.querySelector('[data-a-target="video-player"]');
-      if (videoPlayer && !videoPlayer.querySelector('#twitch-subtitles-container')) {
-        videoPlayer.style.position = 'relative';
-        videoPlayer.appendChild(this.subtitleContainer);
+      if (videoPlayer && videoPlayer !== this.videoPlayer) {
+        this.videoPlayer = videoPlayer;
+        this.trackVideoPlayerPosition();
+        return true;
+      }
+      return false;
+    };
+
+    if (findAndTrack()) return;
+
+    const observer = new MutationObserver(() => {
+      if (findAndTrack()) {
         observer.disconnect();
       }
     });
@@ -70,6 +79,27 @@ class TwitchSubtitles {
       childList: true,
       subtree: true
     });
+  }
+
+  trackVideoPlayerPosition() {
+    const updatePosition = () => {
+      if (!this.videoPlayer || !this.videoPlayer.isConnected) return;
+      const rect = this.videoPlayer.getBoundingClientRect();
+      Object.assign(this.subtitleContainer.style, {
+        left: `${rect.left + rect.width / 2}px`,
+        top: `${rect.bottom - 60}px`,
+        transform: 'translateX(-50%)',
+        width: `${rect.width * 0.8}px`
+      });
+    };
+
+    updatePosition();
+
+    const resizeObserver = new ResizeObserver(updatePosition);
+    resizeObserver.observe(this.videoPlayer);
+
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
   }
 
   setupMessageListener() {
@@ -84,160 +114,112 @@ class TwitchSubtitles {
           sendResponse({ status: 'updated' });
           break;
         case 'getStatus':
-          sendResponse({ 
-            isActive: this.isActive,
-            isSupported: this.isSpeechRecognitionSupported()
-          });
+          sendResponse({ isActive: this.isActive });
+          break;
+        // Sent by background.js once it has a transcript back from Ollama
+        // for a captured tab-audio chunk.
+        case 'transcript':
+          this.processFinalTranscript(request.text, request.sourceLang, request.translatedText);
+          sendResponse({ status: 'ok' });
+          break;
+        case 'transcription-error':
+          this.showError(request.message);
+          sendResponse({ status: 'ok' });
           break;
       }
     });
-  }
-
-  isSpeechRecognitionSupported() {
-    return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
   }
 
   async toggle() {
     if (this.isActive) {
       this.stop();
     } else {
-      await this.start();
+      this.start();
     }
   }
 
-  async start() {
-    if (!this.isSpeechRecognitionSupported()) {
-      this.showError('Speech recognition not supported in this browser');
-      return;
-    }
-
-    try {
-      // Inject script to capture audio from video
-      await this.injectAudioCapture();
-      
-      this.isActive = true;
-      this.subtitleContainer.style.display = 'block';
-      this.startSpeechRecognition();
-      
-      this.showStatus('Subtitles activated');
-    } catch (error) {
-      console.error('Failed to start subtitles:', error);
-      this.showError('Failed to start subtitle recognition');
-    }
+  start() {
+    // Actual tab-audio capture is started by background.js (triggered from
+    // the popup or the context menu, both real user gestures required by
+    // chrome.tabCapture) — this just switches the overlay on.
+    this.isActive = true;
+    this.subtitleContainer.style.display = 'block';
+    this.showStatus('Subtitles activated');
   }
 
   stop() {
     this.isActive = false;
     this.subtitleContainer.style.display = 'none';
-    
-    if (this.recognition) {
-      this.recognition.stop();
-      this.recognition = null;
-    }
-    
+    this.clearSubtitle();
     this.showStatus('Subtitles deactivated');
   }
 
-  async injectAudioCapture() {
-    // Inject script to access video audio
-    const script = document.createElement('script');
-    script.src = chrome.runtime.getURL('injected.js');
-    document.head.appendChild(script);
-    
-    return new Promise((resolve) => {
-      const listener = (event) => {
-        if (event.data.type === 'AUDIO_CONTEXT_READY') {
-          window.removeEventListener('message', listener);
-          resolve();
-        }
-      };
-      window.addEventListener('message', listener);
-    });
-  }
-
-  startSpeechRecognition() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    this.recognition = new SpeechRecognition();
-    
-    this.recognition.continuous = true;
-    this.recognition.interimResults = true;
-    this.recognition.lang = 'auto'; // Auto-detect language
-    
-    this.recognition.onresult = (event) => {
-      let finalTranscript = '';
-      let interimTranscript = '';
-      
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
-        } else {
-          interimTranscript += transcript;
-        }
-      }
-      
-      if (finalTranscript) {
-        this.processFinalTranscript(finalTranscript);
-      } else if (interimTranscript) {
-        this.displaySubtitle(interimTranscript, true);
-      }
-    };
-    
-    this.recognition.onerror = (event) => {
-      console.error('Speech recognition error:', event.error);
-      if (event.error === 'no-speech') {
-        // Restart recognition after brief pause
-        setTimeout(() => {
-          if (this.isActive) {
-            this.recognition.start();
-          }
-        }, 1000);
-      }
-    };
-    
-    this.recognition.onend = () => {
-      if (this.isActive) {
-        // Restart recognition to keep it continuous
-        setTimeout(() => {
-          this.recognition.start();
-        }, 100);
-      }
-    };
-    
-    this.recognition.start();
-  }
-
-  async processFinalTranscript(text) {
+  async processFinalTranscript(text, sourceLang, translatedText) {
     let displayText = text;
-    
-    if (this.translationEnabled && this.targetLanguage !== 'auto') {
-      try {
-        displayText = await this.translateText(text, this.targetLanguage);
-      } catch (error) {
-        console.error('Translation failed:', error);
-        // Fall back to original text
+    const targetLang = this.settings.targetLanguage;
+
+    if (translatedText) {
+      // background.js already asked Ollama to translate inline as part of
+      // the same transcription call — nothing left to do here.
+      displayText = translatedText;
+    } else {
+      // Only fall back to MyMemory when it's the explicitly chosen provider
+      // (never as a silent fallback) and we actually know the source
+      // language — MyMemory's API rejects "auto" as a source language.
+      const shouldTranslateViaMyMemory = this.settings.translationEnabled &&
+        this.settings.translationProvider === 'mymemory' &&
+        sourceLang &&
+        targetLang !== 'auto' &&
+        sourceLang.toLowerCase() !== targetLang.toLowerCase();
+
+      if (shouldTranslateViaMyMemory) {
+        try {
+          displayText = await this.translateText(text, sourceLang, targetLang);
+        } catch (error) {
+          console.error('Translation failed:', error);
+          // Fall back to original text
+        }
       }
     }
-    
+
     this.displaySubtitle(displayText, false);
-    
+    this.appendToHistory(text, displayText, sourceLang);
+
     // Clear subtitle after 5 seconds
     setTimeout(() => {
       this.clearSubtitle();
     }, 5000);
   }
 
-  async translateText(text, targetLang) {
+  async appendToHistory(originalText, displayText, sourceLang) {
+    const MAX_HISTORY_ENTRIES = 200;
+    const { subtitleHistory = [] } = await chrome.storage.local.get('subtitleHistory');
+
+    subtitleHistory.push({
+      time: Date.now(),
+      sourceLang: sourceLang || null,
+      original: originalText,
+      text: displayText
+    });
+
+    if (subtitleHistory.length > MAX_HISTORY_ENTRIES) {
+      subtitleHistory.splice(0, subtitleHistory.length - MAX_HISTORY_ENTRIES);
+    }
+
+    chrome.storage.local.set({ subtitleHistory });
+  }
+
+  async translateText(text, sourceLang, targetLang) {
     // Using a simple translation API (you might want to use Google Translate API or similar)
     // For demo purposes, this is a placeholder
-    const response = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=auto|${targetLang}`);
+    const response = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${sourceLang}|${targetLang}`);
     const data = await response.json();
     return data.responseData.translatedText || text;
   }
 
   displaySubtitle(text, isInterim) {
     if (!this.subtitleContainer) return;
-    
+
     // Create or update subtitle element
     if (!this.currentSubtitle) {
       this.currentSubtitle = document.createElement('div');
@@ -254,7 +236,7 @@ class TwitchSubtitles {
       });
       this.subtitleContainer.appendChild(this.currentSubtitle);
     }
-    
+
     this.currentSubtitle.textContent = text;
     this.currentSubtitle.style.opacity = isInterim ? '0.7' : '1';
   }
@@ -268,14 +250,14 @@ class TwitchSubtitles {
 
   updateSettings(newSettings) {
     this.settings = { ...this.settings, ...newSettings };
-    
+
     if (this.subtitleContainer) {
       Object.assign(this.subtitleContainer.style, {
         fontSize: this.settings.fontSize,
         color: this.settings.textColor
       });
     }
-    
+
     chrome.storage.sync.set({ subtitleSettings: this.settings });
   }
 
@@ -294,7 +276,7 @@ class TwitchSubtitles {
       z-index: 10000;
       font-family: Arial, sans-serif;
     `;
-    
+
     document.body.appendChild(status);
     setTimeout(() => status.remove(), 3000);
   }
@@ -312,8 +294,9 @@ class TwitchSubtitles {
       border-radius: 4px;
       z-index: 10000;
       font-family: Arial, sans-serif;
+      max-width: 320px;
     `;
-    
+
     document.body.appendChild(error);
     setTimeout(() => error.remove(), 5000);
   }

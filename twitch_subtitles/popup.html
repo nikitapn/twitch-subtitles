@@ -176,6 +176,71 @@
             display: inline-block;
             font-size: 18px;
         }
+
+        .history-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .history-header .setting-label {
+            margin-bottom: 0;
+        }
+
+        .clear-btn {
+            background: transparent;
+            color: #adadb8;
+            border: 1px solid #464649;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .clear-btn:hover {
+            border-color: #ff4444;
+            color: #ff4444;
+        }
+
+        .history-box {
+            max-height: 180px;
+            overflow-y: auto;
+            background: #18181b;
+            border: 1px solid #464649;
+            border-radius: 4px;
+            padding: 8px;
+        }
+
+        .history-empty {
+            color: #adadb8;
+            font-size: 13px;
+            text-align: center;
+            padding: 8px 0;
+        }
+
+        .history-entry {
+            padding: 6px 0;
+            border-bottom: 1px solid #2a2a2d;
+            font-size: 13px;
+        }
+
+        .history-entry:last-child {
+            border-bottom: none;
+        }
+
+        .history-entry .history-time {
+            color: #adadb8;
+            font-size: 11px;
+            margin-right: 6px;
+        }
+
+        .history-entry .history-original {
+            color: #adadb8;
+            font-size: 12px;
+            font-style: italic;
+            margin-top: 2px;
+        }
     </style>
 </head>
 <body>
@@ -190,12 +255,30 @@
         <button id="toggle-btn" class="toggle-btn">Enable</button>
     </div>
 
+    <div class="setting-group">
+        <div class="history-header">
+            <label class="setting-label">Transcript History</label>
+            <button id="clear-history-btn" class="clear-btn">Clear</button>
+        </div>
+        <div id="history-box" class="history-box">
+            <div class="history-empty">No subtitles yet</div>
+        </div>
+    </div>
+
     <div class="settings">
         <div class="setting-group">
             <div class="checkbox-group">
                 <input type="checkbox" id="translation-enabled" class="checkbox" checked>
                 <label for="translation-enabled" class="setting-label">Enable Translation</label>
             </div>
+        </div>
+
+        <div class="setting-group">
+            <label class="setting-label">Translation Provider</label>
+            <select id="translation-provider" class="setting-select">
+                <option value="ollama">Ollama (local, no rate limit)</option>
+                <option value="mymemory">MyMemory (online API)</option>
+            </select>
         </div>
 
         <div class="setting-group">
@@ -211,6 +294,31 @@
                 <option value="ko">Korean</option>
                 <option value="zh">Chinese</option>
                 <option value="ru">Russian</option>
+            </select>
+        </div>
+
+        <div class="setting-group">
+            <label class="setting-label">Source Language Hint</label>
+            <select id="source-language-hint" class="setting-select">
+                <option value="">Auto-detect</option>
+                <option value="en">English</option>
+                <option value="es">Spanish</option>
+                <option value="fr">French</option>
+                <option value="de">German</option>
+                <option value="it">Italian</option>
+                <option value="pt">Portuguese</option>
+                <option value="pl">Polish</option>
+                <option value="cs">Czech</option>
+                <option value="sk">Slovak</option>
+                <option value="ru">Russian</option>
+                <option value="uk">Ukrainian</option>
+                <option value="nl">Dutch</option>
+                <option value="sv">Swedish</option>
+                <option value="tr">Turkish</option>
+                <option value="ar">Arabic</option>
+                <option value="ja">Japanese</option>
+                <option value="ko">Korean</option>
+                <option value="zh">Chinese</option>
             </select>
         </div>
 
@@ -240,10 +348,23 @@
                 <div id="preview-text" class="preview-text">Sample subtitle text</div>
             </div>
         </div>
+
+        <div class="setting-group">
+            <label class="setting-label">Ollama Server URL</label>
+            <input type="text" id="ollama-base-url" class="setting-input" placeholder="http://localhost:11434">
+        </div>
+
+        <div class="setting-group">
+            <label class="setting-label">Ollama Model</label>
+            <input type="text" id="ollama-model" class="setting-input" placeholder="gemma4:e4b">
+        </div>
     </div>
 
     <div class="info">
-        Works on Twitch stream pages. Make sure to allow microphone access for speech recognition.
+        Works on Twitch stream pages. Transcription runs locally via
+        <a href="https://ollama.com" target="_blank" style="color:#9146ff;">Ollama</a> —
+        run <code>OLLAMA_ORIGINS="chrome-extension://*" ollama serve</code> and
+        <code>ollama pull gemma4:e4b</code> first.
     </div>
 
     <script src="popup.js"></script>

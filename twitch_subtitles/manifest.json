@@ -7,12 +7,16 @@
   "permissions": [
     "activeTab",
     "storage",
-    "scripting"
+    "contextMenus",
+    "tabCapture",
+    "offscreen"
   ],
-  
+
   "host_permissions": [
     "https://www.twitch.tv/*",
-    "https://twitch.tv/*"
+    "https://twitch.tv/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ],
   
   "background": {
@@ -30,18 +34,5 @@
   "action": {
     "default_popup": "popup.html",
     "default_title": "Twitch Subtitles"
-  },
-  
-  "icons": {
-    "16": "icons/icon16.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
-  },
-  
-  "web_accessible_resources": [
-    {
-      "resources": ["injected.js"],
-      "matches": ["https://www.twitch.tv/*", "https://twitch.tv/*"]
-    }
-  ]
+  }
 }

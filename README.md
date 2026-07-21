@@ -1,199 +1,64 @@
-# Twitch Live Subtitles Chrome Extension
+# Twitch Live Subtitles
 
-Real-time subtitles with English translation for Twitch streams using Web Speech API and translation services.
+A Chrome extension that overlays live, translated subtitles on Twitch streams. Transcription runs locally through [Ollama](https://ollama.com) using Gemma 4's audio input, so no audio ever leaves your machine — translation of the resulting text uses the free [MyMemory](https://mymemory.translated.net) API.
 
-## Features
+## How it works
 
-- **Real-time Speech Recognition**: Automatically transcribes audio from Twitch streams
-- **Multi-language Translation**: Translates subtitles to English or other supported languages
-- **Customizable Appearance**: Adjust font size, colors, and positioning
-- **Responsive Design**: Works on desktop and mobile browsers
-- **Privacy-focused**: All processing happens locally in your browser
+1. **Capture** — when you enable subtitles, `background.js` requests a `chrome.tabCapture` stream for the active Twitch tab and hands it to a hidden offscreen document (service workers can't touch media APIs directly).
+2. **Playback** — `offscreen.js` plays the captured audio straight back out to your speakers (tab capture otherwise mutes the tab) and chunks it into ~5s segments via `MediaRecorder`.
+3. **Transcription** — each chunk is decoded, re-encoded as WAV, and sent to a local Ollama server (`gemma4:e4b` by default) via its OpenAI-compatible `/v1/chat/completions` endpoint with `input_audio` content. The model returns both the detected language and the transcript.
+4. **Translation** — two options, picked in the popup:
+   - **Ollama** (default) — the same transcription request also asks Gemma 4 to translate into your target language, so translation costs no extra round-trip and has no external rate limit.
+   - **MyMemory** — sends the transcript to the free MyMemory API, using the language Ollama detected as the source (not a naive "auto" guess, which that API rejects). Subject to MyMemory's free-tier usage limits.
+5. **Overlay** — the subtitle box lives in `document.body`, positioned with `fixed` CSS tracked against the player's bounding box — it never touches Twitch's own React-managed DOM, which was the cause of an earlier bug where the extension broke video playback.
+
+## Requirements
+
+- Chrome (or a Chromium-based browser) with Manifest V3 support.
+- [Ollama](https://ollama.com) running locally with a Gemma 4 audio-capable model:
+  ```
+  ollama pull gemma4:e4b   # or gemma4:e2b for a lighter model
+  OLLAMA_ORIGINS="chrome-extension://*" ollama serve
+  ```
+  The `OLLAMA_ORIGINS` variable is required — Ollama rejects cross-origin requests from extensions by default.
 
 ## Installation
 
-### From Source (Developer Mode)
-
-1. **Download/Clone** this repository to your computer
-2. **Open Chrome** and navigate to `chrome://extensions/`
-3. **Enable Developer Mode** (toggle in top-right corner)
-4. **Click "Load unpacked"** and select the extension folder
-5. **Pin the extension** to your toolbar for easy access
-
-Install via ZIP
-
-[![Download ZIP](https://img.shields.io/badge/Download-ZIP-blue?logo=google-drive)](https://github.com/pattipur/twitch-subtitles-extension/archive/refs/heads/main.zip)
-
-> Click the button above to download the extension. Then:
-> 1. Extract the ZIP.
-> 2. Open Chrome and go to `chrome://extensions/`
-> 3. Enable "Developer mode"
-> 4. Click "Load unpacked" and select the extracted folder.
-### File Structure
-
-```
-twitch-subtitles-extension/
-├── manifest.json          # Extension configuration
-├── content.js            # Main subtitle logic
-├── popup.html            # Extension popup interface
-├── popup.js              # Popup functionality
-├── background.js         # Service worker
-├── injected.js           # Audio capture script
-├── styles.css            # Subtitle styling
-├── icons/                # Extension icons
-│   ├── icon16.png
-│   ├── icon48.png
-│   └── icon128.png
-└── README.md
-```
+1. Clone this repository.
+2. Go to `chrome://extensions/` and enable **Developer mode**.
+3. Click **Load unpacked** and select the `twitch_subtitles` folder.
+4. Start Ollama as shown above, then open any Twitch stream and click the extension icon.
 
 ## Usage
 
-### Getting Started
+- **Enable/Disable** — toggles both the subtitle overlay and tab-audio capture. Also available from the right-click context menu on any Twitch page.
+- **Source Language Hint** — optional; nudges Gemma 4 toward a specific language when it tends to misdetect one. The model can still report a different language if it's confident.
+- **Translation Provider** — `ollama` (local, folded into the transcription call, no external limits) or `mymemory` (online, free-tier rate limited).
+- **Target Language** — the language subtitles are translated into.
+- **Transcript History** — a scrollable log of everything transcribed this session, since on-screen captions clear after 5 seconds. Persisted in `chrome.storage.local`; clear it with the "Clear" button.
+- **Ollama Server URL / Model** — point at a non-default Ollama host/port or a different model tag.
 
-1. **Navigate to Twitch**: Go to any live stream on twitch.tv
-2. **Click Extension Icon**: Find the Twitch Subtitles icon in your toolbar
-3. **Enable Subtitles**: Click the "Enable" button in the popup
-4. **Allow Microphone**: Grant microphone permission when prompted
-5. **Watch**: Subtitles will appear over the video player
+## File structure
 
-### Features Overview
+```
+twitch_subtitles/
+├── manifest.json      # Extension configuration (MV3)
+├── background.js      # Service worker — tabCapture, offscreen doc lifecycle, Ollama calls
+├── offscreen.js        # Tab audio capture, playback passthrough, WAV chunking
+├── offscreen.html
+├── content.js          # Subtitle overlay, translation, history
+├── popup.html / popup.js  # Settings UI
+├── styles.css
+└── README.md
+```
 
-#### Subtitle Display
-- Subtitles appear at the bottom of the video player
-- Text is displayed with a semi-transparent background for readability
-- Interim results show in lighter opacity while processing
-- Final transcriptions appear in full opacity
+## Known limitations
 
-#### Translation Options
-- **Enable/Disable Translation**: Toggle translation on/off
-- **Target Languages**: English, Spanish, French, German, Italian, Portuguese, Japanese, Korean, Chinese, Russian
-- **Auto-detect Source**: Automatically detects the source language
-
-#### Customization Settings
-- **Font Size**: Small, Medium, Large, Extra Large
-- **Text Color**: Choose any color for subtitle text
-- **Background Opacity**: Adjust transparency (0-100%)
-- **Live Preview**: See changes in real-time
-
-### Keyboard Shortcuts
-
-Currently, the extension uses the popup interface for all controls. Future versions may include keyboard shortcuts.
-
-## Technical Details
-
-### How It Works
-
-1. **Audio Capture**: The extension injects a script to access the video's audio stream using Web Audio API
-2. **Speech Recognition**: Uses the browser's built-in Web Speech API (Chrome's speech recognition)
-3. **Translation**: Sends recognized text to MyMemory Translation API for translation
-4. **Display**: Overlays subtitles on the video player with customizable styling
-
-### Browser Compatibility
-
-- **Chrome/Chromium**: Full support (recommended)
-- **Edge**: Full support
-- **Firefox**: Limited (Web Speech API support varies)
-- **Safari**: Not supported (no Web Speech API)
-
-### Limitations
-
-- **Internet Required**: Both speech recognition and translation require internet connection
-- **Audio Quality**: Performance depends on stream audio quality and background noise
-- **Language Detection**: May not always correctly identify the source language
-- **Rate Limits**: Translation service has usage limits on free tier
-
-## Privacy & Security
-
-- **Local Processing**: Speech recognition happens in your browser
-- **No Audio Storage**: Audio is not recorded or stored anywhere
-- **Translation API**: Text is sent to MyMemory API for translation only
-- **No Tracking**: Extension doesn't track or store personal information
-
-## Troubleshooting
-
-### Common Issues
-
-**Subtitles not appearing:**
-- Ensure you're on a live Twitch stream (not VODs)
-- Check that microphone permission is granted
-- Refresh the page and try again
-- Verify Web Speech API support in your browser
-
-**Poor accuracy:**
-- Check stream audio quality
-- Ensure minimal background noise
-- Try adjusting your system's microphone sensitivity
-- Some accents/languages may have lower accuracy
-
-**Translation not working:**
-- Check internet connection
-- Try selecting a different target language
-- Translation service may have temporary issues
-
-**Extension not loading:**
-- Refresh the Twitch page
-- Disable and re-enable the extension
-- Check Chrome's developer console for errors
-
-### Debug Mode
-
-For developers, open Chrome DevTools on the Twitch page to see:
-- Speech recognition events
-- Translation requests/responses
-- Audio level indicators
-- Error messages
-
-## Development
-
-### Setting Up Development Environment
-
-1. Clone the repository
-2. Make changes to the source files
-3. Reload the extension in `chrome://extensions/`
-4. Test on Twitch streams
-
-### API Keys (Optional)
-
-For better translation quality, you can:
-1. Get a Google Translate API key
-2. Replace the translation function in `background.js`
-3. Add your API key to the extension
-
-### Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
-
-## Future Enhancements
-
-- **Offline Mode**: Local speech recognition without internet
-- **Custom Dictionaries**: Improve accuracy for specific terms/streamers
-- **Multiple Languages**: Simultaneous translation to multiple languages
-- **Subtitle Export**: Save transcriptions for later reference
-- **Streamer Integration**: API for streamers to customize subtitle appearance
-- **Accessibility Features**: Screen reader compatibility and keyboard navigation
-
-## Support
-
-For issues, suggestions, or contributions:
-- Create an issue on GitHub
-- Check existing issues for solutions
-- Review the troubleshooting section above
-
-## License
-
-MIT License
-
-Author
-
-Created by Marisombra — the shadow tide.
-Also known as Patricia, a developer, game designer, and bilingual dreamer.
-Check out more projects at https://github.com/marisombra-dev
+- Gemma 4's audio input support in Ollama is still fairly new; there are open upstream issues around "thinking mode" leaking into transcription output on the OpenAI-compatible endpoint. This extension strips `<think>...</think>` blocks and instructs the model to reply with only the transcript, but occasional noise is possible.
+- Transcription quality depends entirely on the local model you run and your hardware.
+- MyMemory's free tier has usage limits; translation may occasionally fail or be rate-limited.
+- Only one tab can be transcribed at a time.
 
 ## Disclaimer
 
-This extension is not affiliated with Twitch Interactive, Inc. It's an independent project designed to improve accessibility for Twitch viewers.
+Not affiliated with Twitch Interactive, Inc. or Ollama. Independent project for accessibility/translation purposes.
